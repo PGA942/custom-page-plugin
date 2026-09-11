@@ -1,4 +1,4 @@
-# RASQ スロットプラグイン契約 v0.4(plugin-sample)
+# RASQ スロットプラグイン契約 v0.5(plugin-sample)
 
 `rasq-sdk-sample/PROTOCOL.md`(wasm ABI / RRL / FOW / ホスト関数)の上に、**アプリの各所へ
 差し込む「スロット」**を定義する。プラグインは wasm32 cdylib(`rasq-plugin-kit` の
@@ -91,13 +91,20 @@
 - `media.action {token, genre, action}` — 第 2 階層のボタン。即時の操作(回転など)ならその場で処理して
   `composer.media.preview` を呼ぶ。パラメーターが要るなら `fow.open`(第 3 階層 = **エディターの下付き FOW**、
   スライダー等)。スライダーの `change` ごとにプレビューを更新してよい(長辺 ≤ 360 の小さい画像で)。戻り `{}`。
-- `composer.media.preview {token, bytesB64, mimeType}`(ホスト関数)— 中央のプレビューを差し替える(何度でも)。
+- `composer.media.preview {token, bytesB64, mimeType, width?, height?}`(ホスト関数)— 中央のプレビューを差し替える(何度でも)。
+  `width` / `height` = プレビュー画像の画素数(重ねの座標系。省略時はホストが復号して測る)。
+- `composer.media.overlay {token, root}`(ホスト関数、v0.5)— **プレビューの上に重ねる RRL**(回転 / クロップのハンドル、
+  貼り付けたオブジェクトの枠、ペンの受け皿など)。`root` = `Stack`(`p.width` / `p.height` = プレビューの画素数。ホストが表示倍率に
+  合わせて拡縮する)。子は `Box` / `Image` / `Icon` / `Text` を `left/top(/width/height)` で置き、`on: {tap, drag}` で受ける
+  (§3)。`root: null` で消す。プレビューを差し替えても重ねは残る(座標系が変わるなら重ねも出し直す)。
 - `media.commit {token}` — 適用。**戻りに本サイズの結果** `{bytesB64, mimeType, name?}` を返す
   (ホストが添付を差し替えてエディターを閉じる)。`composer.media.replace` でもよい。
   **プラグインをまたぐ編集**: 「ジャンル」の見方で別プラグインの編集を押すと、ホストは今のプラグインを `media.commit` して
   その結果を次のプラグインの `media.edit` に渡す(直列合成)。
 - `media.cancel {token}` — キャンセル(FOW を閉じ、状態を捨てる)。戻り `{}`。
 - 対象の `mimeType` は `image/png` / `image/jpeg`(他は `C01` でよい)。`name` は差し替え後のファイル名(拡張子を変えてよい)。
+- サンプル(v0.5): `media-transform-plugin`(変形: 回転 / クロップのハンドル)、`media-process-plugin`(加工: 顔検知ぼかし、
+  スタンプのオブジェクト = 移動 / 拡縮 / 回転 / 削除 / 複製)、`media-draw-plugin`(描画: ペンの軌跡をスプラインで描く、四角 / 丸のオブジェクト)。
 - `SliderListTile` はホスト側で**楽観更新**する(ドラッグ中はつまみと数値が動く)。プラグインが `setProp` で `value` を
   書き戻せばそれが優先される。
 
@@ -166,6 +173,10 @@ TL プラグインはタブではなく、簡略カスタマイズ UI / ノー�
 - 新ノード **`Box`**: `p: {width, height, color, borderColor, borderWidth, radius}`、子を持てる。`on: {tap}` 可。
 - `Text.p` に `size` / `bold` / `color`。色は `#RRGGBB` か `#RRGGBBAA`(8 桁は末尾が不透明度)。`Icon.p.color` も同じ。
 - L1 ノード(`Text` / `Box` / `Image` …)の `on: {tap, longPress}` はホストが GestureDetector で拾う。
+- **`on: {drag}`**(v0.5): 指でなぞる。イベントの payload は `{phase: "start"|"update"|"end", x, y, dx, dy}`。
+  `x` / `y` はそのノードの左上を原点にした位置、`dx` / `dy` は前回からの差分。単位は親 `Stack` の単位
+  (メディアエディターの重ねなら**プレビューの画素**。ホストが表示倍率を戻してから渡す)。`end` の `dx/dy` は 0。
+  ハンドル(小さな `Box`)にも、画像全体を覆う透明な `Box`(ペンの受け皿)にも付けられる。
 
 ## 4. ホスト関数の追加(すべて fire-and-forget、戻り `{}`)
 
@@ -179,7 +190,8 @@ TL プラグインはタブではなく、簡略カスタマイズ UI / ノー�
 | `composer.open` | `{token, text, mediaB64?, mimeType?, name?}`(§2.8) | — |
 | `astell.share` | `{kind, payload}` | スロット `astell.action` |
 | `composer.media.replace` | `{token, bytesB64, mimeType, name?}` | スロット `composer.media` |
-| `composer.media.preview` | `{token, bytesB64, mimeType}` | スロット `composer.media` |
+| `composer.media.preview` | `{token, bytesB64, mimeType, width?, height?}` | スロット `composer.media` |
+| `composer.media.overlay` | `{token, root}`(§2.2、v0.5) | スロット `composer.media` |
 | `composer.text.replace` | `{token, start, end, text}` | スロット `composer.text` |
 | `viewer.overlay.set` | `{token, root}` | スロット `viewer.overlay` |
 

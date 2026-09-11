@@ -1,4 +1,4 @@
-# RASQ スロットプラグイン契約 v0.5(plugin-sample)
+# RASQ スロットプラグイン契約 v0.6(plugin-sample)
 
 `rasq-sdk-sample/PROTOCOL.md`(wasm ABI / RRL / FOW / ホスト関数)の上に、**アプリの各所へ
 差し込む「スロット」**を定義する。プラグインは wasm32 cdylib(`rasq-plugin-kit` の
@@ -107,6 +107,14 @@
   ネイティブの pro_image_editor が担い、その下段バーの「プラグイン」から本エディターへ**バイパス**する(今の見た目を 1 枚に
   焼き込んで `media.edit` に渡し、`media.commit` の結果を新しい背景にする)。プラグインは wasm / ONNX / アセットに無い
   フィルターなど、ネイティブに無い処理に向く。
+- **合わせる先(バウンディングボックス、v0.6)**: 重ねの `Box` はホスト側で**ダブルタップ → ドロップダウン**
+  「この上にドラッグ(合わせる先にする)」/「合わせる先を選ぶ…」(FOW: 重ねの Box 一覧から複数選択)/「解除」が付く。
+  合わせる先に指定された Box はホストが点線で強調する。以降、`drag` を持つノードの **`end` イベント**で、指を離した位置
+  (ノード左上 + `x,y`)が合わせる先の中にあれば payload に **`snap: {key, label?, left, top, width, height, angle}`**
+  (プレビュー画素、`angle` は度)が付く。プラグインはそれを受けて自分のオブジェクトの矩形 / 角度を合わせる
+  (スタンプは比率を保って内側に収める、図形は矩形そのまま、など。合わせ方はプラグインの裁量)。
+  ホストが Box を一覧に出せるように、重ねの Box には **`p.label`**(表示名: 「スタンプ 1」「顔 2」「クロップ範囲」…)を、
+  回転しているものには **`p.angle`**(度)を付ける。`label` の無い Box は一覧に出ない(ハンドルなど)。
 - サンプル(v0.5): `media-transform-plugin`(変形: 回転 / クロップのハンドル)、`media-process-plugin`(加工: 顔検知ぼかし、
   スタンプのオブジェクト = 移動 / 拡縮 / 回転 / 削除 / 複製)、`media-draw-plugin`(描画: ペンの軌跡をスプラインで描く、四角 / 丸のオブジェクト)。
 - `SliderListTile` はホスト側で**楽観更新**する(ドラッグ中はつまみと数値が動く)。プラグインが `setProp` で `value` を
@@ -174,10 +182,10 @@ TL プラグインはタブではなく、簡略カスタマイズ UI / ノー�
 
 - `Image.p.src` に **`data:image/png;base64,…`** を受ける。`p.width` / `p.height` で大きさ指定。
 - `Stack` の子で `p.left` / `p.top`(+ `width` / `height`)があるものは絶対配置(`Positioned`)。
-- 新ノード **`Box`**: `p: {width, height, color, borderColor, borderWidth, radius}`、子を持てる。`on: {tap}` 可。
+- 新ノード **`Box`**: `p: {width, height, color, borderColor, borderWidth, radius, angle?(度、v0.6: 中心で回転して描く), label?(v0.6: 合わせる先の一覧に出す名前)}`、子を持てる。`on: {tap}` 可。
 - `Text.p` に `size` / `bold` / `color`。色は `#RRGGBB` か `#RRGGBBAA`(8 桁は末尾が不透明度)。`Icon.p.color` も同じ。
 - L1 ノード(`Text` / `Box` / `Image` …)の `on: {tap, longPress}` はホストが GestureDetector で拾う。
-- **`on: {drag}`**(v0.5): 指でなぞる。イベントの payload は `{phase: "start"|"update"|"end", x, y, dx, dy}`。
+- **`on: {drag}`**(v0.5): 指でなぞる。イベントの payload は `{phase: "start"|"update"|"end", x, y, dx, dy}`(v0.6: `end` に `snap` が付くことがある、§2.2)。
   `x` / `y` はそのノードの左上を原点にした位置、`dx` / `dy` は前回からの差分。単位は親 `Stack` の単位
   (メディアエディターの重ねなら**プレビューの画素**。ホストが表示倍率を戻してから渡す)。`end` の `dx/dy` は 0。
   ハンドル(小さな `Box`)にも、画像全体を覆う透明な `Box`(ペンの受け皿)にも付けられる。

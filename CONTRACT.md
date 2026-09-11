@@ -1,4 +1,4 @@
-# RASQ スロットプラグイン契約 v0.3(plugin-sample)
+# RASQ スロットプラグイン契約 v0.4(plugin-sample)
 
 `rasq-sdk-sample/PROTOCOL.md`(wasm ABI / RRL / FOW / ホスト関数)の上に、**アプリの各所へ
 差し込む「スロット」**を定義する。プラグインは wasm32 cdylib(`rasq-plugin-kit` の
@@ -32,7 +32,7 @@
 | slot | 差し込み先 | ホスト → プラグイン(`call`) | プラグイン → ホスト(ホスト関数) |
 |---|---|---|---|
 | `astell.action` | AsTell ルーム FOW 下段の **プラグインアクション** ボタン | `astell.open` / `astell.event` | `astell.share` / `sound.play` / `toast` |
-| `composer.media` | コンポーザー添付タイルの **… → プラグインで加工** | `media.edit` | `composer.media.replace` / `toast` |
+| `composer.media` | コンポーザー添付タイルの **プラグインで加工**(全画面エディター) | `media.catalog` / `media.edit` / `media.action` / `media.commit` / `media.cancel` | `composer.media.preview` / `composer.media.replace` / `toast` |
 | `composer.text` | コンポーザー本文の変化(デバウンス 200ms) | `text.changed` | `composer.text.replace` / `toast` |
 | `viewer.overlay` | メディア全画面ビューワー(画像の上に重ねる) | `viewer.open` / `viewer.close` | `viewer.overlay.set` / `clipboard.set` / `url.open` / `mute.add` / `toast` |
 | `post.transform` | 全 TL の表示直前(投稿加工) | `post.transform` | — |
@@ -60,26 +60,46 @@
 - `sound.play {kind: "click"|"alert"}` — 端末のシステム音(効果音)。ホストは `SystemSound` を鳴らす。
 - 投稿タイルデータの受け渡し(投稿の … → 「AsTell で共有」経由)は `astell.event {type:"share", share:{kind:"post", payload}}` で届く。
 
-### 2.2 `composer.media` — メディア加工(v0.2: 専用の全画面エディター)
+### 2.2 `composer.media` — メディア加工(v0.4: 専用の全画面エディター、プラグイン / ジャンルの 2 つの見方)
 
 ホストは添付の「プラグインで加工」で**専用の全画面エディター**を開く: 中央に画像(画面の 70%。下付き FOW が
-開くと小さくなる)、左に第 1 階層の丸ボタン列(選んだジャンルのアクション)、右に縦のフローティング列
-(上端の ↓ でプラグイン / 編集ジャンルを選ぶ。選ぶと左の列が入れ替わる)、ヘッダーに キャンセル / 適用。
+開くと小さくなる)、右に縦のフローティング列(反転色の角丸枠。上端の ↓ で **「プラグイン」/「ジャンル」** の
+見方を切り替え、その下に プラグイン一覧 または ジャンル一覧)、**下付きの横方向リスト(端はフェードアウト)= 第 2 階層**
+(「プラグイン」なら選んだプラグインの全編集ボタン、「ジャンル」なら**全プラグイン**の中からそのジャンルに該当する
+編集ボタン)、ヘッダーに キャンセル / 適用。パラメーターが要る編集は第 3 階層 = プラグインの下付き FOW(スライダー等)。
 
-- `media.edit {token, index, name, mimeType, width?, height?, bytesB64}` — 添付 1 枚。戻り:
-  - **エディター形**: `{genres: [{id, label, icon?, actions: [{id, label, icon?}]}]}`。ホストがジャンル/アクションの列を描く。
-    `icon` はホストのアイコン名(`rrlIconFor` と同じ。`tune` / `rotate_left` / `crop` …)。
+**ジャンル**は既定 5 種 + カスタム。既定の id は固定(ホストがラベル / アイコンを持つ):
+
+| id | ラベル | 例 |
+|---|---|---|
+| `tone` | 色調 | ガンマ / 色相 / 彩度 / リセット |
+| `process` | 加工 | ぼかし / シャープ / モザイク / フィルター |
+| `transform` | 変形 | 回転 / 反転 / クロップ / リサイズ |
+| `add` | 追加 | テキスト / スタンプ / 枠 |
+| `draw` | 描画 | ペン / 塗り |
+
+カスタムジャンルは任意の id(既定と被らないもの)で `label` / `icon` を付けて宣言する。
+
+- `media.catalog {}` — **セッション無しの静的な一覧**(エディターを開いたときに全 `composer.media` プラグインへ):
+  `{genres: [{id, label?, icon?, actions: [{id, label, icon?}]}]}`。既定ジャンルは `label` / `icon` を省略してよい。
+  「ジャンル」の見方はこれを集めて描く。無い(`C01`)プラグインは「プラグイン」の見方で開いたときの `media.edit` の `genres` で補う。
+- `media.edit {token, index, name, mimeType, width?, height?, bytesB64}` — 添付 1 枚(ほかのプラグインで編集した結果が
+  入力になることもある)。戻り:
+  - **エディター形**: `{genres: [...]}`(`media.catalog` と同じ形)。
   - すぐ返す形(UI 無し): `{bytesB64, mimeType, name?}` → その場で差し替え。
   - 旧形(`{}` を返して自分で `fow.open`)も動く(FOW はエディターの下付きになる)。
-- `media.action {token, genre, action}` — 第 1 階層のボタン。即時の操作(回転など)ならその場で処理して
-  `composer.media.preview` を呼ぶ。パラメーターが要るなら `fow.open`(第 2 階層 = **エディターの下付き FOW**、
+- `media.action {token, genre, action}` — 第 2 階層のボタン。即時の操作(回転など)ならその場で処理して
+  `composer.media.preview` を呼ぶ。パラメーターが要るなら `fow.open`(第 3 階層 = **エディターの下付き FOW**、
   スライダー等)。スライダーの `change` ごとにプレビューを更新してよい(長辺 ≤ 360 の小さい画像で)。戻り `{}`。
 - `composer.media.preview {token, bytesB64, mimeType}`(ホスト関数)— 中央のプレビューを差し替える(何度でも)。
 - `media.commit {token}` — 適用。**戻りに本サイズの結果** `{bytesB64, mimeType, name?}` を返す
   (ホストが添付を差し替えてエディターを閉じる)。`composer.media.replace` でもよい。
+  **プラグインをまたぐ編集**: 「ジャンル」の見方で別プラグインの編集を押すと、ホストは今のプラグインを `media.commit` して
+  その結果を次のプラグインの `media.edit` に渡す(直列合成)。
 - `media.cancel {token}` — キャンセル(FOW を閉じ、状態を捨てる)。戻り `{}`。
 - 対象の `mimeType` は `image/png` / `image/jpeg`(他は `C01` でよい)。`name` は差し替え後のファイル名(拡張子を変えてよい)。
-- `SliderListTile.p.value` を `setProp` で書き換えるとスライダーのつまみも動く(ホストのタイルは props 駆動)。
+- `SliderListTile` はホスト側で**楽観更新**する(ドラッグ中はつまみと数値が動く)。プラグインが `setProp` で `value` を
+  書き戻せばそれが優先される。
 
 ### 2.3 `composer.text` — テキスト加工 / 補完
 

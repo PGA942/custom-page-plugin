@@ -59,12 +59,24 @@
 - `sound.play {kind: "click"|"alert"}` — 端末のシステム音(効果音)。ホストは `SystemSound` を鳴らす。
 - 投稿タイルデータの受け渡し(投稿の … → 「AsTell で共有」経由)は `astell.event {type:"share", share:{kind:"post", payload}}` で届く。
 
-### 2.2 `composer.media` — メディア加工
+### 2.2 `composer.media` — メディア加工(v0.2: 専用の全画面エディター)
 
-- `media.edit {token, index, name, mimeType, width?, height?, bytesB64}` — 添付 1 枚。
-  - すぐ返す形: `{bytesB64, mimeType, name?}` → ホストがその場で差し替える(UI 無し)。
-  - UI を出す形: `{}` を返して `fow.open`(スライダー等)。適用時に
-    `composer.media.replace {token, bytesB64, mimeType, name?}` を呼ぶ(何度でも可。プレビューは FOW 内の `Image` に `data:` URI で)。
+ホストは添付の「プラグインで加工」で**専用の全画面エディター**を開く: 中央に画像(画面の 70%。下付き FOW が
+開くと小さくなる)、左に第 1 階層の丸ボタン列(選んだジャンルのアクション)、右に縦のフローティング列
+(上端の ↓ でプラグイン / 編集ジャンルを選ぶ。選ぶと左の列が入れ替わる)、ヘッダーに キャンセル / 適用。
+
+- `media.edit {token, index, name, mimeType, width?, height?, bytesB64}` — 添付 1 枚。戻り:
+  - **エディター形**: `{genres: [{id, label, icon?, actions: [{id, label, icon?}]}]}`。ホストがジャンル/アクションの列を描く。
+    `icon` はホストのアイコン名(`rrlIconFor` と同じ。`tune` / `rotate_left` / `crop` …)。
+  - すぐ返す形(UI 無し): `{bytesB64, mimeType, name?}` → その場で差し替え。
+  - 旧形(`{}` を返して自分で `fow.open`)も動く(FOW はエディターの下付きになる)。
+- `media.action {token, genre, action}` — 第 1 階層のボタン。即時の操作(回転など)ならその場で処理して
+  `composer.media.preview` を呼ぶ。パラメーターが要るなら `fow.open`(第 2 階層 = **エディターの下付き FOW**、
+  スライダー等)。スライダーの `change` ごとにプレビューを更新してよい(長辺 ≤ 360 の小さい画像で)。戻り `{}`。
+- `composer.media.preview {token, bytesB64, mimeType}`(ホスト関数)— 中央のプレビューを差し替える(何度でも)。
+- `media.commit {token}` — 適用。**戻りに本サイズの結果** `{bytesB64, mimeType, name?}` を返す
+  (ホストが添付を差し替えてエディターを閉じる)。`composer.media.replace` でもよい。
+- `media.cancel {token}` — キャンセル(FOW を閉じ、状態を捨てる)。戻り `{}`。
 - 対象の `mimeType` は `image/png` / `image/jpeg`(他は `C01` でよい)。`name` は差し替え後のファイル名(拡張子を変えてよい)。
 - `SliderListTile.p.value` を `setProp` で書き換えるとスライダーのつまみも動く(ホストのタイルは props 駆動)。
 
@@ -93,9 +105,16 @@
 
 - `post.transform {posts: [Post ワイヤ]}` → `{posts: {postId: {body?, cw?}}}`。載っていない投稿は無加工。
 
-### 2.6 `tl` — タイムライン(PROTOCOL §4.4 と同じ)
+### 2.6 `tl` — タイムライン = **アルゴリズムノード**(v0.2)
 
-- `tl.timelines {}` → `{timelines: [{id, label, base}]}`、`tl.sort {id, posts}` → `{order: [postId…]}`。
+TL プラグインはタブではなく、簡略カスタマイズ UI / ノードグラフの**アルゴリズム部品(ソートノード)**として並ぶ。
+パラメーターは「ノードを設定」FOW にプラグインの RRL 設定ページが差し込まれる。
+
+- `tl.timelines {}` → `{timelines: [{id, label, base}]}`(`label` = 部品名「〇〇でソート」の元。`base` は互換用)。
+- `tl.params {id}` → `{root: RRL, defaults: {key: value}}` — 設定 DSL のサブセット(`SectionHeader` / `RadioListTile` /
+  `SwitchListTile` / `SliderListTile` / `ValueListTile` / `Text`)。値は Bind `$.settings.<key>`、書き込みは
+  `on: {"change": "settings.set"}`(ホストが部品のパラメーターに保存する。ノード key = パラメーター名)。無ければ `C01`。
+- `tl.sort {id, posts, params}` → `{order: [postId…]}` — `params` は保存されたパラメーター(無ければ `defaults`)。
 
 ### 2.7 `trend.suggest` — トレンドのサジェスト
 
@@ -121,6 +140,7 @@
 | `mute.add` | `{text}` | `mute.words`(ユーザー確認つき) |
 | `astell.share` | `{kind, payload}` | スロット `astell.action` |
 | `composer.media.replace` | `{token, bytesB64, mimeType, name?}` | スロット `composer.media` |
+| `composer.media.preview` | `{token, bytesB64, mimeType}` | スロット `composer.media` |
 | `composer.text.replace` | `{token, start, end, text}` | スロット `composer.text` |
 | `viewer.overlay.set` | `{token, root}` | スロット `viewer.overlay` |
 
@@ -131,3 +151,5 @@
 - 「WASMプラグイン試験 (dev)」→ `.wasm` を読み込み → **スロットに登録**。登録はパスを設定に残し、次回起動でも読み直す。
 - 登録されたプラグインはワーカー isolate で常駐し、各スロットの場所(AsTell の下段ボタン / 添付タイルの … / コンポーザー / ビューワー / TL / トレンド)から `call` される。
 - 権限外のホスト関数は `E01`。スロットに宣言の無い `call` は来ない。
+- **FOW の着き方(v0.2)**: プラグインの `fow.open` は、呼び出し元の面の**子**として開く(コンポーザー → MFM ピッカーと同じ
+  インライン FOW、AsTell ルーム FOW → その下、メディアエディター → 下付き)。親が閉じれば連動して閉じる。

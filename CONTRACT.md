@@ -1,4 +1,4 @@
-# RASQ スロットプラグイン契約 v0.1(plugin-sample)
+# RASQ スロットプラグイン契約 v0.3(plugin-sample)
 
 `rasq-sdk-sample/PROTOCOL.md`(wasm ABI / RRL / FOW / ホスト関数)の上に、**アプリの各所へ
 差し込む「スロット」**を定義する。プラグインは wasm32 cdylib(`rasq-plugin-kit` の
@@ -38,6 +38,7 @@
 | `post.transform` | 全 TL の表示直前(投稿加工) | `post.transform` | — |
 | `tl` | ホーム TL のカスタムタブ | `tl.timelines` / `tl.sort` | — |
 | `trend.suggest` | 検索ホームのトレンド節(サジェスト行) | `trend.suggest` | — |
+| `post.share` | 投稿の **共有 FOW** の「プラグイン」節(v0.3、宣言だけで自動登録) | `post.share` / `post.share.close` | `composer.open` / `clipboard.set` / `url.open` / `astell.share` / `toast` |
 
 共通: `lifecycle {kind, surface?}` / FOW の `onClosed` は PROTOCOL どおり。
 
@@ -121,6 +122,23 @@ TL プラグインはタブではなく、簡略カスタマイズ UI / ノー�
 - `trend.suggest {recent: [string], query?: string, limit?: number}` → `{suggestions: [{text, reason?}]}`。
   `recent` = 検索ホームが今持っているトレンド語(タグ)。サーバー無しでも動くよう、ローカルの規則(共起 / 時間帯 / 固定辞書)で返す。
 
+### 2.8 `post.share` — 投稿共有(v0.3: 共有 FOW からインラインで編集 & 共有)
+
+投稿のアクションバー右端(共有)で**共有 FOW** が開く: ヘッダー左にアカウント選択(非公開投稿は受け取った
+アカウントだけ)、本体に 内容をコピー / リンクをコピー / 他のアカウントで共有(選んだアカウントのコンポーザーに
+リンクを初期入力)、**プラグイン**節、DM へ共有、ブラウザで開く。`post.share` を `slots` に宣言したプラグインは
+**権限(マニフェスト)から自動で**プラグイン節に 1 行ずつ並ぶ(`name` / `description`)。
+
+- `post.share {token, post, account, link}` — ユーザーがこのプラグインの行を選んだ。
+  `post` = §2.1 と同じ投稿 payload(`{url, sns, instance, postId, author, handle, avatarUrl?, body, thumbnailUrl?, media[], createdAt?}`)、
+  `account` = ヘッダーで選んだアカウント `{sns, instance, handle}`、`link` = 投稿の Web URL。
+  プラグインはここで `fow.open`(**共有 FOW の子 = インライン**。共有 FOW が閉じれば連動して閉じる)を出し、
+  文面の編集(テンプレート / 引用の付け方 …)と共有先のボタンを描く。戻り `{}`。
+- `post.share.close {token}` — 共有 FOW が閉じた(プラグインは FOW を閉じて状態を捨てる)。戻り `{}`。
+- `composer.open {token, text, mediaB64?, mimeType?, name?}`(ホスト関数)— **選んだアカウントのコンポーザー**を
+  `text` を初期入力して開く(画像を添えるときは `mediaB64` + `mimeType`)。ホストは共有 FOW とプラグイン FOW を閉じてから開く。
+- ほかに `clipboard.set` / `url.open` / `astell.share`(参加中の AsTell があれば)/ `toast`。
+
 ## 3. RRL のホスト拡張(rasq-client D-167 以降。古いホストは無視/⚠ボックス)
 
 - `Image.p.src` に **`data:image/png;base64,…`** を受ける。`p.width` / `p.height` で大きさ指定。
@@ -138,6 +156,7 @@ TL プラグインはタブではなく、簡略カスタマイズ UI / ノー�
 | `clipboard.set` | `{text}` | — |
 | `url.open` | `{url}`(http/https のみ) | — |
 | `mute.add` | `{text}` | `mute.words`(ユーザー確認つき) |
+| `composer.open` | `{token, text, mediaB64?, mimeType?, name?}`(§2.8) | — |
 | `astell.share` | `{kind, payload}` | スロット `astell.action` |
 | `composer.media.replace` | `{token, bytesB64, mimeType, name?}` | スロット `composer.media` |
 | `composer.media.preview` | `{token, bytesB64, mimeType}` | スロット `composer.media` |

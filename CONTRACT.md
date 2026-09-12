@@ -1,4 +1,4 @@
-# RASQ スロットプラグイン契約 v0.6(plugin-sample)
+# RASQ スロットプラグイン契約 v0.7(plugin-sample)
 
 `rasq-sdk-sample/PROTOCOL.md`(wasm ABI / RRL / FOW / ホスト関数)の上に、**アプリの各所へ
 差し込む「スロット」**を定義する。プラグインは wasm32 cdylib(`rasq-plugin-kit` の
@@ -39,6 +39,7 @@
 | `tl` | ホーム TL のカスタムタブ | `tl.timelines` / `tl.sort` | — |
 | `trend.suggest` | 検索ホームのトレンド節(サジェスト行) | `trend.suggest` | — |
 | `post.share` | 投稿の **共有 FOW** の「プラグイン」節(v0.3、宣言だけで自動登録) | `post.share` / `post.share.close` | `composer.open` / `clipboard.set` / `url.open` / `astell.share` / `toast` |
+| `post.action` | 投稿の **アクションバー**(v0.7、手動の投稿加工ボタン。タグで希望スロットを宣言 → 既存ボタンのバンドルへ) | `post.action` | `composer.open` / `clipboard.set` / `url.open` / `astell.share` / `toast` |
 
 共通: `lifecycle {kind, surface?}` / FOW の `onClosed` は PROTOCOL どおり。
 
@@ -177,6 +178,32 @@ TL プラグインはタブではなく、簡略カスタマイズ UI / ノー�
 - `composer.open {token, text, mediaB64?, mimeType?, name?}`(ホスト関数)— **選んだアカウントのコンポーザー**を
   `text` を初期入力して開く(画像を添えるときは `mediaB64` + `mimeType`)。ホストは共有 FOW とプラグイン FOW を閉じてから開く。
 - ほかに `clipboard.set` / `url.open` / `astell.share`(参加中の AsTell があれば)/ `toast`。
+
+### 2.9 `post.action` — 投稿のアクションボタン(v0.7: 手動系の投稿加工、希望スロット宣言)
+
+`post.transform`(自動、表示前に本文を書き換える)と違い、**ユーザーが押して動く**ボタンを投稿のアクションバーに足す。
+マニフェストに **`actions`** を宣言する(`slots` に `post.action` を含める):
+
+```json
+"actions": [
+  { "id": "later", "label": "後で読む", "icon": "bookmark_add", "tags": ["Favorite", "Bookmark", "Star"] },
+  { "id": "copy",  "label": "本文をコピー", "icon": "content_copy", "tags": ["Copy", "Share"] }
+]
+```
+
+- **希望スロット = `tags`**(複数)。ホストはアカウントごとに、SNS の既存アクションボタンのタグ(`genreTag`: `Reaction` / `Repost` /
+  `Reply` / `Quote` / `Favorite` …と、ホストが持つ別名)と比べ、類似度が**閾値(既定 0.85)以上**なら、その既存ボタンの
+  **バンドルの最下層**に足す(既存ボタンがユーザーのアクションリストに入っていればそのリストの末尾、入っていなければ
+  既存ボタン + プラグインボタンの新しいバンドルを作る)。どれにも届かなければ単体ボタンとして末尾に並ぶ。
+  類似度 = タグ同士の最大値(大文字小文字を無視した完全一致 = 1.0、それ以外は文字 2-gram の Dice 係数)。
+- アカウントごとの **スロット設定**(「アクションリストの編集」の「プラグインボタン」節)で、ボタンごとの有効 / 無効と閾値を変えられる。
+  「プラグインボタンを検索」FOW で登録済みプラグインの `actions` から探して足せる。既存ボタンの … → 「置き換え」で
+  既存ボタンの位置にプラグインボタンを入れ替えられる。
+- `post.action {token, actionId, post, account}` — ユーザーが押した。`post` は §2.1 の投稿 payload、`account` = `{sns, instance, handle}`。
+  戻り `{result?: {done?, message?}}`(`message` はホストがトーストに出す)。UI が要るなら `fow.open`(投稿の面と同じカラムに
+  インラインで出る)。ホスト関数は `composer.open`(引用 / 返信の文面をコンポーザーへ)/ `clipboard.set` / `url.open` /
+  `astell.share` / `toast`。
+- ボタンの id はホスト側で `slot:<pluginId>:<actionId>` になる(非表示 / 並び順の保存に使う)。
 
 ## 3. RRL のホスト拡張(rasq-client D-167 以降。古いホストは無視/⚠ボックス)
 

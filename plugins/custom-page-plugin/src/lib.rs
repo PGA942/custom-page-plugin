@@ -50,8 +50,6 @@ struct Board {
     session: Option<Session>,
     /// セッションが閉じられたときの知らせ。
     notice: Option<String>,
-    /// 寄せ書きの下書き(`Input` の `change` で受ける)。
-    draft: String,
     /// このページを開いてから届いた 🎉 の数。
     celebrations: u32,
     /// solo の状態(`storage.safe` の `board`): `{counter, vote, guestbook}`。
@@ -249,12 +247,20 @@ fn page_root(b: &Board) -> Value {
     // 寄せ書き
     let entries = b.guestbook();
     c.push(section("gbHdr", &format!("寄せ書き({} 件)", entries.len())));
-    let mut input = rrl::node("Input", "gbInput", json!({"hint": format!("ひとこと({MAX_TEXT} 文字まで)"), "value": b.draft, "maxLength": MAX_TEXT}), vec![]);
-    input["on"] = json!({"change": "gb.input", "confirm": "gb.send"});
+    // 打ちかけの文字はホストが持つ(描き直しても消えない)。送ると `submit {text}` が来て、欄はホストが空にする(clearOnSubmit)
+    let mut input = rrl::node(
+        "Input",
+        "gbInput",
+        json!({"hint": format!("ひとこと({MAX_TEXT} 文字まで)"), "maxLength": MAX_TEXT, "submitLabel": "書く", "clearOnSubmit": true}),
+        vec![],
+    );
+    input["on"] = json!({"submit": "gb.send"});
     c.push(input);
-    let mut quick = vec![rrl::button("gbSend", "書く", "gb.send")];
+    let mut quick = Vec::new();
     for (i, q) in QUICK.iter().enumerate() {
-        quick.push(rrl::spacer(&format!("gbGap{i}"), 8.0));
+        if i > 0 {
+            quick.push(rrl::spacer(&format!("gbGap{i}"), 8.0));
+        }
         quick.push(rrl::button(&format!("gbQuick{i}"), q, &format!("gb.quick.{i}")));
     }
     c.push(rrl::scroll("gbQuick", true, quick));
@@ -305,11 +311,9 @@ fn post_entry(b: &mut Board, text: &str) {
         return;
     }
     let entry = json!({"text": text, "by": b.my_name()});
-    b.draft.clear();
     if b.session.is_some() {
+        // 寄せ書きは var が届いてから増える(入力欄はホストが空にする)
         check_sent(host::shared_op(&b.token, "guestbook", "append", entry));
-        // 入力欄を空にするためだけに描き直す(寄せ書きは var が届いてから増える)
-        render(b);
     } else {
         let mut list = b.local["guestbook"].as_array().cloned().unwrap_or_default();
         list.push(entry);
@@ -467,15 +471,9 @@ fn handle(fn_name: &str, args: Value) -> Result<Value, Value> {
             set_vote(b, Value::Null);
             Ok(json!({}))
         }),
-        // Input の change: `{value}`(下書きを持つだけ。描き直さない)
-        "gb.input" => with_board(&args, true, |b| {
-            b.draft = args["value"].as_str().unwrap_or("").chars().take(MAX_TEXT).collect();
-            Ok(json!({}))
-        }),
-        // Input の confirm(`{value}`)か「書く」ボタンの tap(下書きを使う)
+        // Input の submit: `{text}`
         "gb.send" => with_board(&args, true, |b| {
-            let text = args["value"].as_str().map(str::to_string).unwrap_or_else(|| b.draft.clone());
-            post_entry(b, &text);
+            post_entry(b, args["text"].as_str().unwrap_or(""));
             Ok(json!({}))
         }),
         f if f.starts_with("gb.quick.") => with_board(&args, true, |b| {
@@ -607,16 +605,15 @@ mod tests {
         assert_eq!(find(&last_render(&take_host_log()), "pollTotal").unwrap()["p"]["text"], json!("合計 1 票"));
         assert_eq!(call_native("poll.vote", json!({"token": "p1", "value": 7})).unwrap_err()["code"], json!("D01"));
 
-        // 寄せ書き: 下書き → confirm → shared.op append {text, by}、入力欄は空に
-        call_native("gb.input", json!({"token": "p1", "nodeId": "x", "kind": "change", "value": "こんばんは"})).unwrap();
-        assert!(take_host_log().is_empty());
-        call_native("gb.send", json!({"token": "p1", "nodeId": "x", "kind": "tap"})).unwrap();
-        let log = take_host_log();
-        assert_eq!(log[0], ("shared.op".to_string(), json!({"token": "p1", "key": "guestbook", "op": "append", "value": {"text": "こんばんは", "by": "花子"}})));
-        assert_eq!(find(&last_render(&log), "gbInput").unwrap()["p"]["value"], json!(""));
+        // 寄せ書き: Input の submit {text} → shared.op append {text, by}(手元では増やさない)
+        let input = find(&root, "gbInput").unwrap().clone();
+        assert_eq!(input["on"], json!({"submit": "gb.send"}));
+        assert_eq!(input["p"]["clearOnSubmit"], json!(true));
+        call_native("gb.send", json!({"token": "p1", "nodeId": "x", "kind": "submit", "text": " こんばんは "})).unwrap();
+        assert_eq!(take_host_log(), vec![("shared.op".to_string(), json!({"token": "p1", "key": "guestbook", "op": "append", "value": {"text": "こんばんは", "by": "花子"}}))]);
         call_native("gb.quick.1", json!({"token": "p1", "nodeId": "x", "kind": "tap"})).unwrap();
         assert_eq!(take_host_log()[0].1["value"], json!({"text": "👍 いいね", "by": "花子"}));
-        call_native("gb.send", json!({"token": "p1", "nodeId": "x", "kind": "confirm", "value": "   "})).unwrap();
+        call_native("gb.send", json!({"token": "p1", "nodeId": "x", "kind": "submit", "text": "   "})).unwrap();
         assert_eq!(take_host_log()[0].0, "toast");
         call_native("page.event", json!({"token": "p1", "type": "var", "key": "guestbook", "value": [{"text": "やあ", "by": "太郎"}, {"text": "こんばんは", "by": "花子"}], "rev": 2, "by": "a1"})).unwrap();
         let root = last_render(&take_host_log());
@@ -673,7 +670,7 @@ mod tests {
         call_native("poll.vote", json!({"token": "p1", "nodeId": "x", "kind": "change", "value": 0})).unwrap();
         assert_eq!(find(&last_render(&take_host_log()), "opt0").unwrap()["p"]["subtitle"], json!("1 票(100%)"));
 
-        call_native("gb.send", json!({"token": "p1", "nodeId": "x", "kind": "confirm", "value": "メモ"})).unwrap();
+        call_native("gb.send", json!({"token": "p1", "nodeId": "x", "kind": "submit", "text": "メモ"})).unwrap();
         let log = take_host_log();
         assert_eq!(log[0].1["value"]["guestbook"], json!([{"text": "メモ", "by": "花子"}]));
         assert_eq!(find(&last_render(&log), "gb0").unwrap()["p"]["title"], json!("メモ"));

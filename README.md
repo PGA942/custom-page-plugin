@@ -7,7 +7,7 @@ rasq-client D-357 / rasq-central S-048)の **shared**(複数人でサーバー�
 - **カウンター**: `+1` → `shared.op {key: "counter", op: "incr", value: 1}`
 - **投票(3 択)**: 「😀 元気 / 😪 ねむい / 🍙 おなかすいた」。自分の票は `shared.set {key: "me.vote", value: 0..2}`(サーバーが
   `@<accountId>.vote` に書き換える = 本人だけが書ける = 1 人 1 票)。集計は全員の `@<accountId>.vote` から数える。「票を取り消す」は `value: null`
-- **寄せ書き**: 入力欄(`Input`)か定型文のボタン → `shared.op {key: "guestbook", op: "append", value: {text, by}}`(`by` = 表示名。
+- **寄せ書き**: 入力欄(`Input` の送信 = `on.submit` → `{text}`)か定型文のボタン → `shared.op {key: "guestbook", op: "append", value: {text, by}}`(`by` = 表示名。
   80 文字まで、サーバーが 500 件で先頭から捨てる)。新しい順に 30 件を表示
 - **🎉**: `shared.call {fn: "celebrate", args: {}}` → 参加者全員(自分も)に `page.event {type: "call"}` が届き、
   それぞれの端末が「🎉 <名前> さんがお祝いしました!」のトーストを出す
@@ -58,8 +58,7 @@ dist/                                    # rasq build --raw の出力(.rasqpkg �
 | `counter.incr` | `{token, nodeId, kind: "tap"}` | shared: `shared.op counter incr 1` / solo: `storage.set` → `page.render` |
 | `poll.vote` | `{token, nodeId, kind: "change", value: 0..2}`(`RadioListTile`) | shared: `shared.set me.vote` / solo: `storage.set` → `page.render`。範囲外は `D01` |
 | `poll.clear` | `{token, nodeId, kind: "tap"}` | shared: `shared.set me.vote null` / solo: 同上 |
-| `gb.input` | `{token, nodeId, kind: "change", value}`(`Input`) | 下書きを持つだけ(描き直さない) |
-| `gb.send` | `{token, nodeId, kind: "confirm", value}`(`Input`)/ `{token, nodeId, kind: "tap"}`(「書く」= 下書き) | shared: `shared.op guestbook append {text, by}` + 入力欄を空に `page.render` / solo: `storage.set` → `page.render`。空なら `toast` |
+| `gb.send` | `{token, nodeId, kind: "submit", text}`(`Input` の送信) | shared: `shared.op guestbook append {text, by}`(欄はホストが空にする)/ solo: `storage.set` → `page.render`。空なら `toast` |
 | `gb.quick.0..2` | `{token, nodeId, kind: "tap"}` | 定型文で `gb.send` と同じ |
 | `celebrate` | `{token, nodeId, kind: "tap"}` | shared: `shared.call celebrate {}` / solo: `toast` → `page.render` |
 | その他 | | `C01` |
@@ -72,7 +71,7 @@ dist/                                    # rasq build --raw の出力(.rasqpkg �
 
 `Scroll`(縦)> `Column` の中に: `Text`(`size` / `bold` / `color`)、`SectionHeader`(`title`)、`Row`、`Spacer`、`Button`(`label`、`on.tap`)、
 `RadioListTile`(`title` / `subtitle` / `value` / `group`、`on.change` → `{value}`)、`Box`(`width` / `height` / `radius` / `color`。投票の棒と
-お知らせの帯)、`Input`(`hint` / `value` / `maxLength`、`on.change` / `on.confirm` → `{value}`)、`Scroll`(横。定型文のボタン)、`ListTile`(`title` / `subtitle`。寄せ書き)。
+お知らせの帯)、`Input`(`hint` / `maxLength` / `submitLabel: "書く"` / `clearOnSubmit: true`、`on.submit` → `{text}`。打ちかけの文字はホストが持つ)、`Scroll`(横。定型文のボタン)、`ListTile`(`title` / `subtitle`。寄せ書き)。
 
 ## ビルドと確認
 
@@ -85,7 +84,7 @@ rasq inspect dist/sample.board-0.1.0.rasqpkg
 ```
 
 native テスト(`cargo test`)は `set_host_hook` でホスト関数を差し替え、shared の一巡(`+1` → `shared.op`、`var` で描き直し、
-投票の集計と取り消し、寄せ書きの append と入力欄のクリア、🎉 の `shared.call` と届いた `call` のトースト、`joined` / `left`、古い token の無視、
+投票の集計と取り消し、寄せ書きの append、🎉 の `shared.call` と届いた `call` のトースト、`joined` / `left`、古い token の無視、
 `closed` で端末だけに切り替え)と solo の一巡(`storage.set` の中身)を見ている。
 
 ビルド済みの wasm をそのまま叩く:

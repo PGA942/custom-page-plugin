@@ -1,0 +1,54 @@
+# custom-page-plugin CI — rasq-sdk-sample の `rasq` CLI で検査してからビルドする。
+#
+# SDK(契約・スキーマ・登録簿・kit の正典)は隣に clone する(rasq-client の
+# .gitlab-ci.yml と同じ sibling checkout)。CI_JOB_TOKEN を使うので、
+# rasq-sdk-sample 側の Settings > CI/CD > Job token permissions に
+# このプロジェクトを許可しておくこと。
+image: rust:1
+
+stages:
+  - check
+  - build
+
+variables:
+  # 契約 v0.18(slot page)が SDK の main に入るまではそのブランチで検査する。無ければ下の clone が既定のブランチ(main)に落ちる
+  SDK_SAMPLE_BRANCH: "agent/page-slot-v018"
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+
+.rasq:
+  cache:
+    key: cargo-$CI_COMMIT_REF_SLUG
+    paths:
+      - .cargo/registry/
+      - target/
+  before_script:
+    # 1. SDK を隣に clone
+    - |
+      SDK_DIR="$CI_PROJECT_DIR/../rasq-sdk-sample"
+      rm -rf "$SDK_DIR"
+      git clone --depth 1 -b "$SDK_SAMPLE_BRANCH" "${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}:${CI_SERVER_PORT}/orgate-question/rasq-sdk-sample.git" "$SDK_DIR" \
+        || git clone --depth 1 "${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}:${CI_SERVER_PORT}/orgate-question/rasq-sdk-sample.git" "$SDK_DIR"
+    # 2. rasq CLI を組む(スキーマ / 登録簿 / 雛形はバイナリに同梱されている)
+    - (cd "$CI_PROJECT_DIR/../rasq-sdk-sample/rust" && cargo build --release -p rasq-cli)
+    - export PATH="$CI_PROJECT_DIR/../rasq-sdk-sample/rust/target/release:$PATH"
+    # 3. wasm32 のターゲット
+    - rustup target add wasm32-unknown-unknown
+    - rasq --version
+
+check:
+  extends: .rasq
+  stage: check
+  # wasm32 ビルド → export 検査 → plugin.manifest 往復 → スキーマ / 登録簿 → cargo test
+  script:
+    - rasq check
+
+build:
+  extends: .rasq
+  stage: build
+  # dist/<id>-<version>.rasqpkg と生の .wasm(D-168 の今のホスト向け)
+  script:
+    - rasq build --raw --no-sign
+    - for f in dist/*.rasqpkg; do rasq inspect "$f"; done
+  artifacts:
+    paths:
+      - dist/

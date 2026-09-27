@@ -1,0 +1,12 @@
+[package]
+name = "custom-page-plugin"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "みんなのボード — ページ型プラグイン(shared)のサンプル(カウンター / 投票 / 寄せ書き / 🎉)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rasq-plugin-kit = { path = "../../kit" }

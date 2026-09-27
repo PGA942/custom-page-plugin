@@ -1,0 +1,13 @@
+# rasq CLI が rasq.toml から作り直すファイル(手で直しても rasq new で戻る)。
+[workspace]
+resolver = "2"
+members = [
+    "plugins/custom-page-plugin",
+]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

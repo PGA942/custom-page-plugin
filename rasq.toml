@@ -1,0 +1,28 @@
+schema = "rasq.workspace/1"
+sdk = "0.1.0"
+
+[author]
+namespace = "sample"
+
+[[plugins]]
+name = "custom-page-plugin"
+slot = "page"
+id = "sample.board"
+
+# 権限の理由(rasq build が配布物の目次 root.safety に入れ、Central が掲載に反映する)。
+# 審査 (rasq-judge) は宣言した権限すべてに理由があるかを見る。無いと自動では承認されない。
+[listing.safety]
+external_hosts = []
+data_handling = "カウンター・投票・寄せ書きは、みんなで開いたとき(shared のセッション)は RASQ Central のセッション変数に保存され、同じセッションの参加者に見えます。1 人で開いたときは端末の中だけに保存し、外部には送信しません。"
+
+[[listing.safety.permissions]]
+permission = "render"
+reason = "ボード(カウンター・投票・寄せ書き)のページを表示するため"
+
+[[listing.safety.permissions]]
+permission = "shared.session"
+reason = "ルームやプロフィールで開いたとき、カウンター・投票・寄せ書きを参加者全員で共有し、「🎉」を全員に届けるため"
+
+[[listing.safety.permissions]]
+permission = "storage.safe"
+reason = "1 人で開いたとき、カウンター・投票・寄せ書きを端末に保存して次回も続きから使えるようにするため"

@@ -40,6 +40,9 @@ check:
   stage: check
   # wasm32 ビルド → export 検査 → plugin.manifest 往復 → スキーマ / 登録簿 → cargo test
   script:
+    # kit/ は rasq-sdk-sample の rust/rasq-plugin-kit の写し(正典は SDK 側)。ずれていたら落とす。
+    # 直し方: cp ../rasq-sdk-sample/rust/rasq-plugin-kit/Cargo.toml kit/ && cp ../rasq-sdk-sample/rust/rasq-plugin-kit/src/lib.rs kit/src/
+    - diff -r "$CI_PROJECT_DIR/../rasq-sdk-sample/rust/rasq-plugin-kit" kit || { echo "kit/ が rasq-sdk-sample の rasq-plugin-kit とずれています(上の diff)"; exit 1; }
     - rasq check
 
 build:

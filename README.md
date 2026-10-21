@@ -6,7 +6,8 @@ rasq-client D-357 / rasq-central S-048)の **shared**(複数人でサーバー�
 
 - **カウンター**: `+1` → `shared.op {key: "counter", op: "incr", value: 1}`
 - **投票(3 択)**: 「😀 元気 / 😪 ねむい / 🍙 おなかすいた」。自分の票は `shared.set {key: "me.vote", value: 0..2}`(サーバーが
-  `@<accountId>.vote` に書き換える = 本人だけが書ける = 1 人 1 票)。集計は全員の `@<accountId>.vote` から数える。「票を取り消す」は `value: null`
+  `@<accountId>.vote` に書き換える = 本人だけが書ける)。集計は全員の `@<accountId>.vote` **ちょうど**のキーだけから数える
+  (本人は `me.extra.vote` → `@<accountId>.extra.vote` のような別のキーも書けるので、それは数えない = 1 人 1 票)。「票を取り消す」は `value: null`
 - **寄せ書き**: 入力欄(`Input` の送信 = `on.submit` → `{text}`)か定型文のボタン → `shared.op {key: "guestbook", op: "append", value: {text, by}}`(`by` = 表示名。
   80 文字まで、サーバーが 500 件で先頭から捨てる)。新しい順に 30 件を表示
 - **🎉**: `shared.call {fn: "celebrate", args: {}}` → 参加者全員(自分も)に `page.event {type: "call"}` が届き、

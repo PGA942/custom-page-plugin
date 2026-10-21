@@ -2,7 +2,8 @@
 //!
 //! - カウンター: `+1` → `shared.op {key: "counter", op: "incr", value: 1}`
 //! - 投票(3 択): 自分の票を `shared.set {key: "me.vote", value: <0..2>}`(サーバーが `@<accountId>.vote` に書き換える)。
-//!   集計は全員の `@<accountId>.vote` から数える(1 人 1 票はサーバーが守る: `@<accountId>.` のキーは本人だけが書ける)
+//!   集計は全員の `@<accountId>.vote` から数える(`@<accountId>.` のキーは本人だけが書けるが、本人は `me.extra.vote` のような
+//!   別のキーも書けるので、数えるのは `@<accountId>.vote` ちょうどのキーだけ = 1 人 1 票)
 //! - 寄せ書き: `shared.op {key: "guestbook", op: "append", value: {text, by}}`(サーバーが 500 件で先頭から捨てる)
 //! - 「🎉」: `shared.call {fn: "celebrate", args: {}}` → 全員(自分も)に `page.event {type: "call"}` が届き、トーストを出す
 //!
@@ -106,7 +107,7 @@ impl Board {
         match &self.session {
             Some(s) => {
                 for (k, v) in &s.vars {
-                    if k.starts_with('@') && k.ends_with(".vote") {
+                    if is_vote_key(k) {
                         if let Some(i) = v["value"].as_u64().map(|i| i as usize).filter(|i| *i < OPTIONS.len()) {
                             t[i] += 1;
                         }
@@ -133,6 +134,12 @@ impl Board {
     fn save_local(&self) {
         host::storage_set(STORE_KEY, self.local.clone());
     }
+}
+
+/// 1 人 1 票のキー(`@<accountId>.vote` ちょうど)か。`@<accountId>.extra1.vote` のような本人の別のキーは数えない
+/// (accountId には `.` が入らないので、`@` と `.vote` の間に `.` があれば別のキー)。
+fn is_vote_key(k: &str) -> bool {
+    k.strip_prefix('@').and_then(|r| r.strip_suffix(".vote")).is_some_and(|id| !id.is_empty() && !id.contains('.'))
 }
 
 fn empty_local() -> Value {
@@ -680,6 +687,41 @@ mod tests {
         assert_eq!(log[0], ("toast".to_string(), json!({"message": "🎉 おめでとう!"})));
         // shared.* は呼ばない
         assert!(!log.iter().any(|(f, _)| f.starts_with("shared.")));
+    }
+
+    #[test]
+    fn extra_vote_keys_do_not_add_votes() {
+        let _g = serial();
+        set_host_hook(|_, _| json!({}));
+        take_host_log();
+        // a2 が自分の名前空間に `me.extra1.vote` / `me.extra2.vote` を書いても(サーバーが `@a2.extra1.vote` などに書き換える)1 票のまま
+        let mut s = session();
+        s["vars"]["@a2.extra1.vote"] = json!({"value": 1, "rev": 1, "by": "a2"});
+        s["vars"]["@a2.extra2.vote"] = json!({"value": 0, "rev": 1, "by": "a2"});
+        s["vars"]["@.vote"] = json!({"value": 0, "rev": 1, "by": "a2"});
+        let root = open(s)["root"].clone();
+        assert_eq!(find(&root, "opt0").unwrap()["p"]["subtitle"], json!("0 票(0%)"));
+        assert_eq!(find(&root, "opt1").unwrap()["p"]["subtitle"], json!("1 票(100%)"));
+        assert_eq!(find(&root, "pollTotal").unwrap()["p"]["text"], json!("合計 1 票"));
+        // 後から届いた別のキーでも増えない。本人の正しい票と取り消しは今までどおり数える
+        call_native("page.event", json!({"token": "p1", "type": "var", "key": "@a2.extra3.vote", "value": 2, "rev": 1, "by": "a2"})).unwrap();
+        assert_eq!(find(&last_render(&take_host_log()), "pollTotal").unwrap()["p"]["text"], json!("合計 1 票"));
+        call_native("page.event", json!({"token": "p1", "type": "var", "key": "@a1.vote", "value": 2, "rev": 1, "by": "a1"})).unwrap();
+        let root = last_render(&take_host_log());
+        assert_eq!(find(&root, "opt2").unwrap()["p"]["subtitle"], json!("1 票(50%)"));
+        assert_eq!(find(&root, "pollTotal").unwrap()["p"]["text"], json!("合計 2 票"));
+        call_native("page.event", json!({"token": "p1", "type": "var", "key": "@a1.vote", "value": null, "rev": 2, "by": "a1"})).unwrap();
+        assert_eq!(find(&last_render(&take_host_log()), "pollTotal").unwrap()["p"]["text"], json!("合計 1 票"));
+    }
+
+    #[test]
+    fn vote_key_shape() {
+        assert!(is_vote_key("@a1.vote"));
+        assert!(is_vote_key("@3f2b6c1e-0000-4000-8000-000000000001.vote"));
+        assert!(!is_vote_key("@a1.extra.vote"));
+        assert!(!is_vote_key("@.vote"));
+        assert!(!is_vote_key("a1.vote"));
+        assert!(!is_vote_key("@a1.votes"));
     }
 
     #[test]

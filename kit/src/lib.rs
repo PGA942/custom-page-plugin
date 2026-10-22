@@ -6,6 +6,7 @@
 //! - [`host_call`] でホスト関数(`rasq.hostfn/1`)を呼ぶ(native ビルドではテスト用フックに差し替え可)
 //! - [`rrl`] に RRL ノードのビルダー、[`Surface`] に FOW(拡張面)の open / patch / close
 //! - [`set_patch`] / [`tree_updated`] で本体ツリーの差分/再取得を頼む
+//! - [`i18n`] に利用者に見せる文の表(`args.locale`、無ければ `ja`。[`i18n_catalog!`] で宣言して `TEXT.t(locale, key)`)
 //!
 //! プラグイン本体は「`root()` が返す RRL」と「`call(fn, args)` の match」だけ書けばよい。
 //! 契約の正典は `docs/slots.md`(スロット契約)と `PROTOCOL.md`。plugin-sample の各リポジトリの `kit/` はこのクレートの複製(D-244i: ここが正典、`rasq init` がワークスペースへ写す)。
@@ -17,6 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 pub use serde_json;
+
+pub mod i18n;
 
 // ---------------------------------------------------------------------------
 // wasm ABI: 線形メモリの受け渡し(PROTOCOL §4.1)
@@ -488,6 +491,69 @@ pub mod host {
     pub fn shared_call(token: &str, fn_name: &str, args: Value) -> Value {
         host_call("shared.call", json!({"token": token, "fn": fn_name, "args": args}))
     }
+    /// `shared.set {token, key, value, ttl}`(v0.22): 期限つきで書く。`ttl_secs` 秒(1〜2,592,000)で Central が消し、
+    /// 全員へ `page.event {type: "var", value: null, reason: "expired"}` が届く。
+    pub fn shared_set_ttl(token: &str, key: &str, value: Value, ttl_secs: u32) -> Value {
+        host_call("shared.set", json!({"token": token, "key": key, "value": value, "ttl": ttl_secs}))
+    }
+    /// `shared.op {token, key, op, value, ttl}`(v0.22): 原子的な操作と一緒に期限を付け直す。
+    pub fn shared_op_ttl(token: &str, key: &str, op: &str, value: Value, ttl_secs: u32) -> Value {
+        host_call("shared.op", json!({"token": token, "key": key, "op": op, "value": value, "ttl": ttl_secs}))
+    }
+    /// `media.editor.open {token, format: "svg", aspect, svg?, title?}`(v0.22、slot page): メディア編集画面を SVG モードで開く。
+    /// 保存で `page.event {type: "edited", svg, width, height}`、閉じたら `{type: "editCancelled"}`。`svg` を渡すと続きから描ける。
+    pub fn media_editor_open(token: &str, aspect: &str, svg: Option<&str>, title: Option<&str>) -> Value {
+        let mut a = json!({"token": token, "format": "svg", "aspect": aspect});
+        if let Some(s) = svg {
+            a["svg"] = json!(s);
+        }
+        if let Some(t) = title {
+            a["title"] = json!(t);
+        }
+        host_call("media.editor.open", a)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// data: URI(RRL の Image に置く画像)
+// ---------------------------------------------------------------------------
+
+/// 標準の base64(`+` `/`、`=` で埋める)。
+pub fn base64_encode(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// SVG の文字列を `Image.p.src` に置ける `data:image/svg+xml;base64,…` にする(v0.22、docs/rrl.md の「SVG」。ホストが消毒して描く)。
+pub fn svg_data_uri(svg: &str) -> String {
+    format!("data:image/svg+xml;base64,{}", base64_encode(svg.as_bytes()))
+}
+
+/// zstd で縮めた SVG(`page.event {type: "edited"}` の `svgz` = zstd のフレームの標準の base64、v0.23)を `Image.p.src` に置ける
+/// `data:image/svg+xml;zstd;base64,…` にする。v0.23 のホスト(`page.open` の `contract` が `"0.23"` 以上)が展開・消毒して描く。
+/// `media.editor.open` の `svg` にもそのまま渡せる(続きから描く)。
+pub fn svgz_data_uri(svgz_b64: &str) -> String {
+    format!("data:image/svg+xml;zstd;base64,{svgz_b64}")
+}
+
+/// `page.open` の `contract`(ホストが話す契約の版、v0.23 から)が `want` 以上か。`"0.23"` のような `<major>.<minor>`。
+/// 無い(v0.22 以前のホスト)/ 読めないときは false。
+pub fn host_contract_at_least(args: &Value, want: (u32, u32)) -> bool {
+    let Some(v) = args.get("contract").and_then(Value::as_str) else { return false };
+    let mut it = v.split('.').map(|p| p.trim().parse::<u32>());
+    match (it.next(), it.next()) {
+        (Some(Ok(major)), Some(Ok(minor))) => (major, minor) >= want,
+        _ => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -531,6 +597,8 @@ macro_rules! rasq_plugin {
             let fn_name = $crate::read_str(fn_ptr, fn_len);
             let args: $crate::serde_json::Value = $crate::serde_json::from_str(&$crate::read_str(args_ptr, args_len)).unwrap_or($crate::serde_json::Value::Null);
             let call_id = $crate::read_str(call_id_ptr, call_id_len);
+            // args.locale(無ければ ja)を覚えておく: args の無い snapshot() でも i18n::current() で引ける。
+            $crate::i18n::set_current(&args);
             let outcome: Result<$crate::serde_json::Value, $crate::serde_json::Value> = ($call)(fn_name.as_str(), args);
             $crate::pack($crate::result_message(&call_id, outcome).to_string().into_bytes())
         }
@@ -538,6 +606,7 @@ macro_rules! rasq_plugin {
         /// native テスト用: export と同じ経路で `call` を呼ぶ。
         pub fn call_native(fn_name: &str, args: $crate::serde_json::Value) -> Result<$crate::serde_json::Value, $crate::serde_json::Value> {
             $crate::set_scope($scope);
+            $crate::i18n::set_current(&args);
             ($call)(fn_name, args)
         }
     };
@@ -555,6 +624,28 @@ pub fn manifest(id: &str, name: &str, version: &str, kind: &str, description: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base64_and_svg_data_uri() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+        assert_eq!(svg_data_uri("<svg/>"), "data:image/svg+xml;base64,PHN2Zy8+");
+        assert_eq!(svgz_data_uri("KLUv/QBYIQAAPHN2Zy8+"), "data:image/svg+xml;zstd;base64,KLUv/QBYIQAAPHN2Zy8+");
+    }
+
+    #[test]
+    fn host_contract() {
+        assert!(host_contract_at_least(&json!({"contract": "0.23"}), (0, 23)));
+        assert!(host_contract_at_least(&json!({"contract": "0.24"}), (0, 23)));
+        assert!(host_contract_at_least(&json!({"contract": "1.0"}), (0, 23)));
+        assert!(!host_contract_at_least(&json!({"contract": "0.22"}), (0, 23)));
+        assert!(!host_contract_at_least(&json!({}), (0, 23)));
+        assert!(!host_contract_at_least(&json!({"contract": "x"}), (0, 23)));
+        assert!(!host_contract_at_least(&json!({"contract": 23}), (0, 23)));
+    }
 
     #[test]
     fn patch_and_rev() {
